@@ -1,0 +1,20 @@
+[package]
+name = "bitwig-keymap-editor"
+version = "0.1.0"
+description = "Bitwig Keymap Editor"
+authors = ["OpenAI Codex"]
+edition = "2021"
+
+[lib]
+name = "bitwig_keymap_editor_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tauri = { version = "2.0.0", features = [] }
+tauri-plugin-dialog = "2.0.0"
+thiserror = "2.0.0"

@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Default capability for the Bitwig keymap editor","local":true,"windows":["main"],"permissions":["core:default","dialog:default"]}}
