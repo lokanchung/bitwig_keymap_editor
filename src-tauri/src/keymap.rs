@@ -46,6 +46,7 @@ pub struct EditableBinding {
 pub struct EditableCommand {
     pub id: String,
     pub name: String,
+    pub primary_binding_id: Option<String>,
     pub known_contexts: Vec<String>,
     pub shortcuts: Vec<EditableBinding>,
 }
@@ -67,6 +68,7 @@ struct ParsedDocument {
 #[derive(Clone, Debug)]
 struct RawCommand {
     name: String,
+    primary_binding_index: Option<usize>,
     shortcuts: Vec<RawBinding>,
 }
 
@@ -99,6 +101,11 @@ pub fn save_keymap(path: &Path, document: &EditableDocument, template: &BinaryTe
         .iter()
         .map(|command| RawCommand {
             name: command.name.clone(),
+            primary_binding_index: command
+                .primary_binding_id
+                .as_ref()
+                .and_then(|binding_id| command.shortcuts.iter().position(|binding| binding.id == *binding_id))
+                .or_else(|| (!command.shortcuts.is_empty()).then_some(0)),
             shortcuts: command
                 .shortcuts
                 .iter()
@@ -152,16 +159,34 @@ fn parse_keymap(bytes: &[u8]) -> Result<ParsedDocument, KeymapError> {
 
         cursor.expect_bytes(COMMAND_SEPARATOR)?;
 
-        if cursor.peek_tag_with_type(0x1635, 0x0B) {
-            cursor.read_u32_pair_field(0x1635, 0x0B)?;
+        let primary_binding_index = if cursor.peek_tag_with_type(0x1635, 0x0B) {
+            let (primary_binding_value, _) = cursor.read_u32_pair_field(0x1635, 0x0B)?;
+            let next_value = next_binding_value(&commands);
+            let primary_binding_offset = primary_binding_value
+                .checked_sub(next_value)
+                .ok_or_else(|| {
+                    KeymapError::InvalidFormat(format!(
+                        "primary binding reference {primary_binding_value} precedes command base {next_value} for command '{name}'"
+                    ))
+                })? as usize;
+
+            if primary_binding_offset >= shortcuts.len() {
+                return Err(KeymapError::InvalidFormat(format!(
+                    "primary binding reference {primary_binding_value} is out of range for command '{name}'"
+                )));
+            }
+
+            Some(primary_binding_offset)
         } else if cursor.peek_tag_with_type(0x1635, 0x0A) {
             cursor.read_u32_field(0x1635, 0x0A)?;
+            None
         } else {
             return Err(KeymapError::InvalidFormat("missing command terminator field".to_string()));
-        }
+        };
 
         commands.push(RawCommand {
             name,
+            primary_binding_index,
             shortcuts,
         });
 
@@ -207,7 +232,12 @@ fn serialize_keymap(template: &BinaryTemplate, commands: &[RawCommand]) -> Vec<u
         if command.shortcuts.is_empty() {
             write_u32_field(&mut out, 0x1635, 0x0A, 0);
         } else {
-            write_u32_pair_field(&mut out, 0x1635, 0x0B, next_value, 0);
+            let primary_binding_offset = command
+                .primary_binding_index
+                .filter(|index| *index < command.shortcuts.len())
+                .unwrap_or(0) as u32;
+            let primary_binding_value = next_value + primary_binding_offset;
+            write_u32_pair_field(&mut out, 0x1635, 0x0B, primary_binding_value, 0);
             next_value += command.shortcuts.len() as u32 + 1;
         }
     }
@@ -223,6 +253,9 @@ fn to_editable_document(path: PathBuf, commands: &[RawCommand]) -> EditableDocum
         .enumerate()
         .map(|(command_index, command)| {
             let mut known_contexts = BTreeSet::new();
+            let primary_binding_id = command
+                .primary_binding_index
+                .map(|binding_index| format!("{command_index}:{binding_index}"));
             let shortcuts = command
                 .shortcuts
                 .iter()
@@ -250,6 +283,7 @@ fn to_editable_document(path: PathBuf, commands: &[RawCommand]) -> EditableDocum
             EditableCommand {
                 id: command_index.to_string(),
                 name: command.name.clone(),
+                primary_binding_id,
                 known_contexts: known_contexts.into_iter().collect(),
                 shortcuts,
             }
@@ -354,6 +388,18 @@ fn display_key_label(key: &str) -> String {
 
 fn find_sequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|window| window == needle)
+}
+
+fn next_binding_value(commands: &[RawCommand]) -> u32 {
+    let mut next_value = 3_u32;
+
+    for command in commands {
+        if !command.shortcuts.is_empty() {
+            next_value += command.shortcuts.len() as u32 + 1;
+        }
+    }
+
+    next_value
 }
 
 fn write_tag(out: &mut Vec<u8>, tag: u32, field_type: u8) {
@@ -553,5 +599,29 @@ mod tests {
                 assert_eq!(left_binding.context, right_binding.context);
             }
         }
+    }
+
+    #[test]
+    fn preserves_sample_bytes_exactly() {
+        let sample = fs::read(sample_path()).unwrap();
+        let parsed = parse_keymap(&sample).unwrap();
+        let rebuilt = serialize_keymap(&parsed.template, &parsed.commands);
+
+        let first_diff = sample
+            .iter()
+            .zip(rebuilt.iter())
+            .position(|(left, right)| left != right)
+            .or_else(|| (sample.len() != rebuilt.len()).then_some(sample.len().min(rebuilt.len())));
+
+        if let Some(offset) = first_diff {
+            panic!(
+                "bytes differ at offset {offset}: original={:02X?} rebuilt={:02X?}",
+                &sample[offset.saturating_sub(8)..sample.len().min(offset + 16)],
+                &rebuilt[offset.saturating_sub(8)..rebuilt.len().min(offset + 16)]
+            );
+        }
+
+        assert_eq!(parsed.commands[266].name, "focus_browser_search_field");
+        assert_eq!(parsed.commands[266].primary_binding_index, Some(5));
     }
 }

@@ -13,6 +13,7 @@ export interface ShortcutBinding {
 export interface CommandEntry {
   id: string;
   name: string;
+  primaryBindingId: string | null;
   knownContexts: string[];
   shortcuts: ShortcutBinding[];
 }
