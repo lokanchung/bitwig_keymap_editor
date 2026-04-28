@@ -1,8 +1,7 @@
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { loadKeymap as loadPlatformKeymap, openKeymapFile, saveKeymapFile } from "./platform";
 import { createBinding, displayShortcut, draftFromBinding, keyboardEventToDraft, normalizeShortcut } from "./shortcut";
-import type { CommandEntry, KeymapDocument, SaveResult, ShortcutBinding, ShortcutDraft } from "./types";
+import type { CommandEntry, KeymapDocument, ShortcutBinding, ShortcutDraft } from "./types";
 
 interface EditorModalState {
   commandId: string;
@@ -17,13 +16,6 @@ interface CollisionState {
   draft: ShortcutDraft;
   collisions: Array<{ commandName: string; bindingId: string; display: string }>;
 }
-
-const fileFilters = [
-  {
-    name: "Bitwig keymap",
-    extensions: ["bwkeymap"]
-  }
-];
 
 function cloneDocument(document: KeymapDocument): KeymapDocument {
   return {
@@ -142,7 +134,7 @@ export default function App() {
     setError(null);
 
     try {
-      const loaded = await invoke<KeymapDocument>("load_keymap", path ? { path } : {});
+      const loaded = await loadPlatformKeymap(path);
       setDocument(loaded);
       setIsDirty(false);
       setStatus(loaded.path ? `Loaded ${loaded.path}` : "Loaded DefaultKeymap");
@@ -181,13 +173,13 @@ export default function App() {
   }, [deferredNameQuery, deferredShortcutQuery, document]);
 
   async function openAnyFile() {
-    const selected = await open({
-      filters: fileFilters,
-      multiple: false
-    });
+    setError(null);
+    const loaded = await openKeymapFile();
 
-    if (typeof selected === "string") {
-      await loadKeymap(selected);
+    if (loaded) {
+      setDocument(loaded);
+      setIsDirty(false);
+      setStatus(loaded.path ? `Loaded ${loaded.path}` : "Loaded keymap");
     }
   }
 
@@ -196,26 +188,12 @@ export default function App() {
       return;
     }
 
-    let targetPath = document.path;
+    try {
+      const result = await saveKeymapFile(document, saveAs);
 
-    if (saveAs || !targetPath) {
-      const selected = await save({
-        defaultPath: targetPath ?? "DefaultKeymap.bwkeymap",
-        filters: fileFilters
-      });
-
-      if (!selected) {
+      if (!result) {
         return;
       }
-
-      targetPath = selected.endsWith(".bwkeymap") ? selected : `${selected}.bwkeymap`;
-    }
-
-    try {
-      const result = await invoke<SaveResult>("save_keymap", {
-        path: targetPath,
-        document
-      });
 
       setDocument({
         ...document,

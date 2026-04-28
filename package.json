@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:web": "tsc && vite build",
+    "build:web:single": "npm run build:web && node scripts/inline-dist.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },
