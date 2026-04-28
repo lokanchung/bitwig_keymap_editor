@@ -411,6 +411,7 @@ interface ShortcutModalProps {
 
 function ShortcutModal(props: ShortcutModalProps) {
   const [draft, setDraft] = useState<ShortcutDraft | null>(props.modal.draft);
+  const submitLabel = props.modal.bindingId ? "Modify" : "Add";
   const [display, setDisplay] = useState(
     props.modal.draft
       ? displayShortcut(
@@ -502,7 +503,7 @@ function ShortcutModal(props: ShortcutModalProps) {
               Cancel
             </button>
             <button className="primary-button" disabled={!draft} onClick={onSubmit} type="button">
-              Add
+              {submitLabel}
             </button>
           </div>
         </div>
