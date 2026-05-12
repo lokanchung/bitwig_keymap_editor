@@ -1,7 +1,7 @@
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
-import { loadKeymap as loadPlatformKeymap, openKeymapFile, saveKeymapFile } from "./platform";
+import { DEFAULT_KEYMAPS, listDefaultKeymaps, loadKeymap as loadPlatformKeymap, openKeymapFile, saveKeymapFile } from "./platform";
 import { createBinding, displayShortcut, draftFromBinding, keyboardEventToDraft, normalizeShortcut } from "./shortcut";
-import type { CommandEntry, KeymapDocument, ShortcutBinding, ShortcutDraft } from "./types";
+import type { CommandEntry, DefaultKeymap, KeymapDocument, ShortcutBinding, ShortcutDraft } from "./types";
 
 interface EditorModalState {
   commandId: string;
@@ -123,21 +123,25 @@ export default function App() {
   const [editorModal, setEditorModal] = useState<EditorModalState | null>(null);
   const [collisionState, setCollisionState] = useState<CollisionState | null>(null);
   const [isDirty, setIsDirty] = useState(false);
+  const [defaultKeymaps, setDefaultKeymaps] = useState<DefaultKeymap[]>(DEFAULT_KEYMAPS);
+  const [selectedDefaultKeymapId, setSelectedDefaultKeymapId] = useState(DEFAULT_KEYMAPS[0]?.id ?? "");
 
   const deferredNameQuery = useDeferredValue(nameQuery);
   const deferredShortcutQuery = useDeferredValue(shortcutQuery);
 
-  const displayedPath = document?.path ?? "DefaultKeymap";
+  const selectedDefaultKeymap = defaultKeymaps.find((keymap) => keymap.id === selectedDefaultKeymapId) ?? defaultKeymaps[0];
+  const displayedPath = document?.path ?? selectedDefaultKeymap?.label ?? "Default keymap";
 
-  async function loadKeymap(path?: string) {
-    setStatus(path ? `Loading ${path}...` : "Loading keymap...");
+  async function loadKeymap(path?: string, defaultKeymapId = selectedDefaultKeymapId) {
+    const defaultKeymap = defaultKeymaps.find((keymap) => keymap.id === defaultKeymapId) ?? defaultKeymaps[0];
+    setStatus(path ? `Loading ${path}...` : `Loading ${defaultKeymap?.label ?? "keymap"}...`);
     setError(null);
 
     try {
-      const loaded = await loadPlatformKeymap(path);
+      const loaded = await loadPlatformKeymap(path, defaultKeymapId);
       setDocument(loaded);
       setIsDirty(false);
-      setStatus(loaded.path ? `Loaded ${loaded.path}` : "Loaded DefaultKeymap");
+      setStatus(loaded.path ? `Loaded ${loaded.path}` : `Loaded ${defaultKeymap?.label ?? "default keymap"}`);
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : String(loadError);
       setError(message);
@@ -146,7 +150,22 @@ export default function App() {
   }
 
   useEffect(() => {
-    void loadKeymap();
+    async function loadInitialDefault() {
+      try {
+        const bundledKeymaps = await listDefaultKeymaps();
+        const nextDefaultKeymaps = bundledKeymaps.length > 0 ? bundledKeymaps : DEFAULT_KEYMAPS;
+        const nextSelectedId = nextDefaultKeymaps[0]?.id ?? "";
+        setDefaultKeymaps(nextDefaultKeymaps);
+        setSelectedDefaultKeymapId(nextSelectedId);
+        await loadKeymap(undefined, nextSelectedId);
+      } catch (loadError) {
+        const message = loadError instanceof Error ? loadError.message : String(loadError);
+        setError(message);
+        setStatus("Failed to load keymap");
+      }
+    }
+
+    void loadInitialDefault();
   }, []);
 
   const filteredCommands = useMemo(() => {
@@ -181,6 +200,11 @@ export default function App() {
       setIsDirty(false);
       setStatus(loaded.path ? `Loaded ${loaded.path}` : "Loaded keymap");
     }
+  }
+
+  async function changeDefaultKeymap(defaultKeymapId: string) {
+    setSelectedDefaultKeymapId(defaultKeymapId);
+    await loadKeymap(undefined, defaultKeymapId);
   }
 
   async function saveCurrent(saveAs: boolean) {
@@ -276,6 +300,16 @@ export default function App() {
           <p className="app-subtitle">{displayedPath}</p>
         </div>
         <div className="toolbar">
+          <label className="default-keymap-select">
+            <span>Default</span>
+            <select value={selectedDefaultKeymapId} onChange={(event) => void changeDefaultKeymap(event.target.value)}>
+              {defaultKeymaps.map((keymap) => (
+                <option key={keymap.id} value={keymap.id}>
+                  {keymap.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <button onClick={() => void openAnyFile()}>Open</button>
           <button disabled={!document} onClick={() => void saveCurrent(false)}>
             Save

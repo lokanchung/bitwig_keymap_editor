@@ -6,17 +6,31 @@ use std::{
 };
 use thiserror::Error;
 
-const FIRST_COMMAND_PREAMBLE: &[u8] = &[0x00, 0x00, 0x06, 0x19, 0x00, 0x00, 0x16, 0x32, 0x12, 0x00, 0x00, 0x06, 0x1B];
+const FIRST_COMMAND_PREAMBLE: &[u8] = &[
+    0x00, 0x00, 0x06, 0x19, 0x00, 0x00, 0x16, 0x32, 0x12, 0x00, 0x00, 0x06, 0x1B,
+];
 const COMMAND_PREAMBLE: &[u8] = &[0x00, 0x00, 0x06, 0x1B];
 const BINDING_PREAMBLE: &[u8] = &[0x00, 0x00, 0x06, 0x17];
 const COMMAND_SEPARATOR: &[u8] = &[0x00, 0x00, 0x00, 0x03];
-const DEFAULT_KEYMAP_NAME: &str = "DefaultKeymap";
-const DEFAULT_KEYMAP_BYTES: &[u8] = include_bytes!("../resources/DefaultKeymap.bwkeymap");
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BundledKeymap {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub file_name: &'static str,
+    #[serde(skip)]
+    pub bytes: &'static [u8],
+}
+
+include!(concat!(env!("OUT_DIR"), "/default_keymaps.rs"));
 
 #[derive(Debug, Error)]
 pub enum KeymapError {
     #[error("failed to read keymap: {0}")]
     Io(#[from] std::io::Error),
+    #[error("unknown default keymap: {0}")]
+    UnknownDefaultKeymap(String),
     #[error("invalid keymap data: {0}")]
     InvalidFormat(String),
 }
@@ -88,14 +102,36 @@ pub fn load_keymap(path: &Path) -> Result<(EditableDocument, BinaryTemplate), Ke
     Ok((document, parsed.template))
 }
 
-pub fn load_default_keymap() -> Result<(EditableDocument, BinaryTemplate), KeymapError> {
-    let parsed = parse_keymap(DEFAULT_KEYMAP_BYTES)?;
-    let mut document = to_editable_document(PathBuf::from(DEFAULT_KEYMAP_NAME), &parsed.commands);
+pub fn load_default_keymap(
+    default_keymap_id: Option<&str>,
+) -> Result<(EditableDocument, BinaryTemplate), KeymapError> {
+    let default_keymap = select_default_keymap(default_keymap_id)?;
+    let parsed = parse_keymap(default_keymap.bytes)?;
+    let mut document =
+        to_editable_document(PathBuf::from(default_keymap.file_name), &parsed.commands);
     document.path = None;
     Ok((document, parsed.template))
 }
 
-pub fn save_keymap(path: &Path, document: &EditableDocument, template: &BinaryTemplate) -> Result<(), KeymapError> {
+fn select_default_keymap(
+    default_keymap_id: Option<&str>,
+) -> Result<&'static BundledKeymap, KeymapError> {
+    match default_keymap_id {
+        Some(id) => DEFAULT_KEYMAPS
+            .iter()
+            .find(|keymap| keymap.id == id)
+            .ok_or_else(|| KeymapError::UnknownDefaultKeymap(id.to_string())),
+        None => DEFAULT_KEYMAPS.first().ok_or_else(|| {
+            KeymapError::UnknownDefaultKeymap("no bundled keymaps found".to_string())
+        }),
+    }
+}
+
+pub fn save_keymap(
+    path: &Path,
+    document: &EditableDocument,
+    template: &BinaryTemplate,
+) -> Result<(), KeymapError> {
     let commands = document
         .commands
         .iter()
@@ -104,7 +140,12 @@ pub fn save_keymap(path: &Path, document: &EditableDocument, template: &BinaryTe
             primary_binding_index: command
                 .primary_binding_id
                 .as_ref()
-                .and_then(|binding_id| command.shortcuts.iter().position(|binding| binding.id == *binding_id))
+                .and_then(|binding_id| {
+                    command
+                        .shortcuts
+                        .iter()
+                        .position(|binding| binding.id == *binding_id)
+                })
                 .or_else(|| (!command.shortcuts.is_empty()).then_some(0)),
             shortcuts: command
                 .shortcuts
@@ -126,8 +167,9 @@ pub fn save_keymap(path: &Path, document: &EditableDocument, template: &BinaryTe
 }
 
 fn parse_keymap(bytes: &[u8]) -> Result<ParsedDocument, KeymapError> {
-    let start = find_sequence(bytes, FIRST_COMMAND_PREAMBLE)
-        .ok_or_else(|| KeymapError::InvalidFormat("could not locate command section".to_string()))?;
+    let start = find_sequence(bytes, FIRST_COMMAND_PREAMBLE).ok_or_else(|| {
+        KeymapError::InvalidFormat("could not locate command section".to_string())
+    })?;
 
     let prefix = bytes[..start].to_vec();
     let mut cursor = Cursor::new(bytes, start);
@@ -181,7 +223,9 @@ fn parse_keymap(bytes: &[u8]) -> Result<ParsedDocument, KeymapError> {
             cursor.read_u32_field(0x1635, 0x0A)?;
             None
         } else {
-            return Err(KeymapError::InvalidFormat("missing command terminator field".to_string()));
+            return Err(KeymapError::InvalidFormat(
+                "missing command terminator field".to_string(),
+            ));
         };
 
         commands.push(RawCommand {
@@ -220,7 +264,11 @@ fn serialize_keymap(template: &BinaryTemplate, commands: &[RawCommand]) -> Vec<u
 
         for binding in &command.shortcuts {
             out.extend_from_slice(BINDING_PREAMBLE);
-            write_string_field(&mut out, 0x1636, binding.context.as_deref().unwrap_or_default());
+            write_string_field(
+                &mut out,
+                0x1636,
+                binding.context.as_deref().unwrap_or_default(),
+            );
             write_u8_field(&mut out, 0x162D, 0x05, binding.primary_modifier);
             write_u8_field(&mut out, 0x162E, 0x01, binding.mask);
             write_string_field(&mut out, 0x162F, &binding.key);
@@ -317,7 +365,11 @@ fn normalize_shortcut(binding: &RawBinding) -> String {
     }
 
     parts.push(binding.key.to_lowercase());
-    format!("{}::{}", parts.join("+"), binding.context.as_deref().unwrap_or("").to_lowercase())
+    format!(
+        "{}::{}",
+        parts.join("+"),
+        binding.context.as_deref().unwrap_or("").to_lowercase()
+    )
 }
 
 fn display_shortcut(binding: &RawBinding) -> String {
@@ -387,7 +439,9 @@ fn display_key_label(key: &str) -> String {
 }
 
 fn find_sequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 fn next_binding_value(commands: &[RawCommand]) -> u32 {
@@ -454,7 +508,11 @@ impl<'a> Cursor<'a> {
     }
 
     fn expect_bytes(&mut self, expected: &[u8]) -> Result<(), KeymapError> {
-        if self.bytes.get(self.position..self.position + expected.len()) == Some(expected) {
+        if self
+            .bytes
+            .get(self.position..self.position + expected.len())
+            == Some(expected)
+        {
             self.position += expected.len();
             Ok(())
         } else {
@@ -466,7 +524,9 @@ impl<'a> Cursor<'a> {
     }
 
     fn peek_bytes(&self, expected: &[u8]) -> bool {
-        self.bytes.get(self.position..self.position + expected.len()) == Some(expected)
+        self.bytes
+            .get(self.position..self.position + expected.len())
+            == Some(expected)
     }
 
     fn peek_tag_with_type(&self, tag: u32, field_type: u8) -> bool {
@@ -483,7 +543,9 @@ impl<'a> Cursor<'a> {
         let slice = self
             .bytes
             .get(self.position..self.position + length)
-            .ok_or_else(|| KeymapError::InvalidFormat("string field exceeded file length".to_string()))?;
+            .ok_or_else(|| {
+                KeymapError::InvalidFormat("string field exceeded file length".to_string())
+            })?;
         self.position += length;
         Ok(String::from_utf8_lossy(slice).into_owned())
     }
@@ -517,7 +579,9 @@ impl<'a> Cursor<'a> {
     fn read_reserved_binding_tail(&mut self) -> Result<u8, KeymapError> {
         self.expect_tag(0x1630, 0x05)?;
         let Some(slice) = self.bytes.get(self.position..self.position + 5) else {
-            return Err(KeymapError::InvalidFormat("expected reserved binding tail".to_string()));
+            return Err(KeymapError::InvalidFormat(
+                "expected reserved binding tail".to_string(),
+            ));
         };
 
         if slice[1..] != [0, 0, 0, 0] {
@@ -534,7 +598,9 @@ impl<'a> Cursor<'a> {
 
     fn expect_tag(&mut self, tag: u32, field_type: u8) -> Result<(), KeymapError> {
         let Some(slice) = self.bytes.get(self.position..self.position + 5) else {
-            return Err(KeymapError::InvalidFormat("unexpected end of file".to_string()));
+            return Err(KeymapError::InvalidFormat(
+                "unexpected end of file".to_string(),
+            ));
         };
 
         if slice[..4] != tag.to_be_bytes() || slice[4] != field_type {
@@ -550,7 +616,9 @@ impl<'a> Cursor<'a> {
 
     fn read_u32(&mut self) -> Result<u32, KeymapError> {
         let Some(slice) = self.bytes.get(self.position..self.position + 4) else {
-            return Err(KeymapError::InvalidFormat("expected 4-byte payload".to_string()));
+            return Err(KeymapError::InvalidFormat(
+                "expected 4-byte payload".to_string(),
+            ));
         };
 
         self.position += 4;
@@ -565,7 +633,7 @@ mod tests {
     fn sample_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("resources")
-            .join("DefaultKeymap.bwkeymap")
+            .join("6.0.bwkeymap")
     }
 
     #[test]
@@ -593,7 +661,10 @@ mod tests {
 
             for (left_binding, right_binding) in left.shortcuts.iter().zip(right.shortcuts.iter()) {
                 assert_eq!(left_binding.key, right_binding.key);
-                assert_eq!(left_binding.primary_modifier, right_binding.primary_modifier);
+                assert_eq!(
+                    left_binding.primary_modifier,
+                    right_binding.primary_modifier
+                );
                 assert_eq!(left_binding.mask, right_binding.mask);
                 assert_eq!(left_binding.tail_flag, right_binding.tail_flag);
                 assert_eq!(left_binding.context, right_binding.context);

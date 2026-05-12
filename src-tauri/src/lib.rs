@@ -1,6 +1,9 @@
 mod keymap;
 
-use keymap::{load_default_keymap, load_keymap as load_keymap_file, save_keymap as save_keymap_file, BinaryTemplate, EditableDocument, KeymapError};
+use keymap::{
+    load_default_keymap, load_keymap as load_keymap_file, save_keymap as save_keymap_file,
+    BinaryTemplate, BundledKeymap, EditableDocument, KeymapError, DEFAULT_KEYMAPS,
+};
 use serde::Serialize;
 use std::{
     path::PathBuf,
@@ -20,17 +23,30 @@ struct SaveResult {
 }
 
 #[tauri::command]
-fn load_keymap(path: Option<String>, state: State<'_, AppState>) -> Result<EditableDocument, String> {
+fn list_default_keymaps() -> Vec<BundledKeymap> {
+    DEFAULT_KEYMAPS.to_vec()
+}
+
+#[tauri::command]
+fn load_keymap(
+    path: Option<String>,
+    default_keymap: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<EditableDocument, String> {
     let (document, template) = match path {
         Some(path) => load_keymap_file(&PathBuf::from(path)).map_err(render_error)?,
-        None => load_default_keymap().map_err(render_error)?,
+        None => load_default_keymap(default_keymap.as_deref()).map_err(render_error)?,
     };
     *lock_template(&state)? = Some(template);
     Ok(document)
 }
 
 #[tauri::command]
-fn save_keymap(path: String, document: EditableDocument, state: State<'_, AppState>) -> Result<SaveResult, String> {
+fn save_keymap(
+    path: String,
+    document: EditableDocument,
+    state: State<'_, AppState>,
+) -> Result<SaveResult, String> {
     let template = lock_template(&state)?
         .clone()
         .ok_or_else(|| "no keymap template loaded. Open a keymap before saving.".to_string())?;
@@ -43,7 +59,9 @@ fn save_keymap(path: String, document: EditableDocument, state: State<'_, AppSta
     })
 }
 
-fn lock_template<'a>(state: &'a State<'_, AppState>) -> Result<MutexGuard<'a, Option<BinaryTemplate>>, String> {
+fn lock_template<'a>(
+    state: &'a State<'_, AppState>,
+) -> Result<MutexGuard<'a, Option<BinaryTemplate>>, String> {
     state
         .template
         .lock()
@@ -58,7 +76,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
-        .invoke_handler(tauri::generate_handler![load_keymap, save_keymap])
+        .invoke_handler(tauri::generate_handler![
+            list_default_keymaps,
+            load_keymap,
+            save_keymap
+        ])
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_title("Bitwig Keymap Editor");

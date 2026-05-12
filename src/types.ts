@@ -28,6 +28,12 @@ export interface SaveResult {
   path: string;
 }
 
+export interface DefaultKeymap {
+  id: string;
+  label: string;
+  fileName: string;
+}
+
 export interface ShortcutDraft {
   key: string;
   primaryModifier: number;

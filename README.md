@@ -6,7 +6,7 @@ The app loads Bitwig keymaps, displays commands and their assigned shortcuts, an
 
 ## Features
 
-- Open existing `.bwkeymap` files or start from the bundled `DefaultKeymap.bwkeymap`.
+- Open existing `.bwkeymap` files or start from a bundled versioned default keymap.
 - Add, edit, and remove shortcut bindings.
 - Preserve known shortcut contexts.
 - Detect shortcut collisions before applying edits.
@@ -80,11 +80,10 @@ Bitwig keymap files are binary files. Before overwriting an existing keymap, kee
 
 In the desktop app, `Save` writes back to the currently opened file and `Save As` prompts for a destination. In the browser app, saving downloads a new `.bwkeymap` file because browsers cannot write directly to arbitrary local paths.
 
-The default keymap bundled with the app lives at `src-tauri/resources/DefaultKeymap.bwkeymap`.
+Bundled default keymaps live in `src-tauri/resources/` as versioned `.bwkeymap` files, such as `6.0.bwkeymap`.
 
 ## Project Structure
 
 - `src/` - React UI, shortcut handling, browser keymap parser/serializer, and platform adapter.
 - `src-tauri/` - Tauri shell, Rust keymap parser/serializer, native file commands, app resources, and capabilities.
 - `scripts/` - build helper scripts, including the web single-file inliner.
-

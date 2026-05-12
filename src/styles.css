@@ -63,6 +63,7 @@ button {
 .toolbar {
   display: flex;
   gap: 10px;
+  align-items: center;
 }
 
 .toolbar button,
@@ -73,6 +74,23 @@ button {
   color: #fbfbf8;
   padding: 10px 18px;
   border-radius: 8px;
+}
+
+.default-keymap-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #c9c4bb;
+  font-size: 13px;
+}
+
+.default-keymap-select select {
+  min-height: 40px;
+  border: 1px solid #66635c;
+  border-radius: 8px;
+  background: #2c2b28;
+  color: #fbfbf8;
+  padding: 8px 32px 8px 10px;
 }
 
 .toolbar button:disabled,
